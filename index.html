@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Living Room Defense</title>
+  <style>
+    :root {
+      --bg: #f6efe4;
+      --room: #f0dcc2;
+      --accent: #7a5031;
+      --danger: #c94f4f;
+      --safe: #4ea04e;
+      --panel: rgba(255, 255, 255, 0.85);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at center, var(--bg), #e5d0b2);
+      font-family: Arial, Helvetica, sans-serif;
+      color: #3f2a1a;
+      padding: 16px;
+    }
+
+    .game-wrap {
+      width: min(92vw, 860px);
+    }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 10px;
+      background: var(--panel);
+      border: 2px solid #c9ad89;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+
+    .meter {
+      width: 220px;
+      max-width: 100%;
+    }
+
+    .meter-label {
+      font-size: 0.9rem;
+      margin-bottom: 4px;
+    }
+
+    .meter-bar {
+      width: 100%;
+      height: 16px;
+      border-radius: 999px;
+      background: #efdcc6;
+      overflow: hidden;
+      border: 1px solid #c6a27c;
+    }
+
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--safe), #d9ad37, var(--danger));
+      transition: width 0.2s linear;
+    }
+
+    #game {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      border: 5px solid #9d7752;
+      border-radius: 14px;
+      overflow: hidden;
+      cursor: crosshair;
+      background:
+        linear-gradient(45deg, rgba(255,255,255,0.12) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.12) 75%),
+        linear-gradient(45deg, rgba(255,255,255,0.12) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.12) 75%),
+        var(--room);
+      background-size: 36px 36px;
+      background-position: 0 0, 18px 18px;
+      user-select: none;
+    }
+
+    /* Center target represents the "safe zone" of the room. */
+    #center-target {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 92px;
+      height: 92px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      border: 3px dashed rgba(122, 80, 49, 0.6);
+      display: grid;
+      place-items: center;
+      color: rgba(122, 80, 49, 0.7);
+      font-weight: bold;
+      pointer-events: none;
+      background: rgba(255, 255, 255, 0.4);
+    }
+
+    .cozy {
+      position: absolute;
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      font-size: 1.8rem;
+      transform: translate(-50%, -50%);
+      transition: transform 0.08s;
+      filter: drop-shadow(0 2px 2px rgba(0,0,0,0.18));
+    }
+
+    .cozy:active { transform: translate(-50%, -50%) scale(0.92); }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(25, 15, 8, 0.56);
+      color: white;
+      display: none;
+      place-items: center;
+      text-align: center;
+      padding: 16px;
+    }
+
+    .overlay.show { display: grid; }
+
+    .overlay button {
+      margin-top: 14px;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 1rem;
+      cursor: pointer;
+      background: #ffd894;
+      color: #412a1a;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-wrap">
+    <div class="hud">
+      <div><strong>Score:</strong> <span id="score">0</span></div>
+      <div class="meter">
+        <div class="meter-label"><strong>Coziness Level:</strong> <span id="cozyText">0 / 100</span></div>
+        <div class="meter-bar">
+          <div id="cozyFill" class="meter-fill"></div>
+        </div>
+      </div>
+      <div><strong>Spawn Speed:</strong> <span id="spawnRate">1.4s</span></div>
+    </div>
+
+    <div id="game" aria-label="Living room game area">
+      <div id="center-target">CENTER</div>
+      <div id="overlay" class="overlay">
+        <div>
+          <h2>Too Cozy! You Lost 🛋️</h2>
+          <p>Final score: <span id="finalScore">0</span></p>
+          <button id="restartBtn">Play Again</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Cozy object emojis. Easy to swap for icons or images later.
+    const COZY_TYPES = ["🛏️", "🧸", "🕯️", "🪴", "🧶", "🧺"];
+
+    // Main game configuration values.
+    const MAX_COZINESS = 100;
+    const COZINESS_GAIN = 12;
+    const START_SPAWN_MS = 1400;
+    const MIN_SPAWN_MS = 420;
+    const SPAWN_ACCELERATION = 0.96; // Applied after each spawn to speed up over time.
+
+    const game = document.getElementById("game");
+    const scoreEl = document.getElementById("score");
+    const cozyText = document.getElementById("cozyText");
+    const cozyFill = document.getElementById("cozyFill");
+    const spawnRateEl = document.getElementById("spawnRate");
+    const overlay = document.getElementById("overlay");
+    const finalScoreEl = document.getElementById("finalScore");
+    const restartBtn = document.getElementById("restartBtn");
+
+    let score = 0;
+    let coziness = 0;
+    let spawnDelay = START_SPAWN_MS;
+    let spawnTimer = null;
+    let animationId = null;
+    let running = true;
+    const objects = [];
+
+    function updateHud() {
+      scoreEl.textContent = score;
+      cozyText.textContent = `${coziness} / ${MAX_COZINESS}`;
+      cozyFill.style.width = `${(coziness / MAX_COZINESS) * 100}%`;
+      spawnRateEl.textContent = `${(spawnDelay / 1000).toFixed(2)}s`;
+    }
+
+    // Choose a random point on one edge of the game area.
+    function randomEdgeSpawn(width, height) {
+      const edge = Math.floor(Math.random() * 4);
+      if (edge === 0) return { x: Math.random() * width, y: 0 };         // top
+      if (edge === 1) return { x: width, y: Math.random() * height };    // right
+      if (edge === 2) return { x: Math.random() * width, y: height };    // bottom
+      return { x: 0, y: Math.random() * height };                        // left
+    }
+
+    // Create and register a new cozy object.
+    function spawnObject() {
+      if (!running) return;
+
+      const rect = game.getBoundingClientRect();
+      const spawn = randomEdgeSpawn(rect.width, rect.height);
+      const center = { x: rect.width / 2, y: rect.height / 2 };
+      const dx = center.x - spawn.x;
+      const dy = center.y - spawn.y;
+      const length = Math.hypot(dx, dy) || 1;
+
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "cozy";
+      el.textContent = COZY_TYPES[Math.floor(Math.random() * COZY_TYPES.length)];
+      el.style.left = `${spawn.x}px`;
+      el.style.top = `${spawn.y}px`;
+
+      // Clicking destroys the object and adds score.
+      const object = {
+        el,
+        x: spawn.x,
+        y: spawn.y,
+        vx: (dx / length) * (0.6 + Math.random() * 0.9),
+        vy: (dy / length) * (0.6 + Math.random() * 0.9),
+        alive: true,
+      };
+
+      el.addEventListener("click", () => {
+        if (!object.alive || !running) return;
+        object.alive = false;
+        score += 10;
+        el.remove();
+        updateHud();
+      });
+
+      game.appendChild(el);
+      objects.push(object);
+
+      // Increase spawn pressure each time a new object appears.
+      spawnDelay = Math.max(MIN_SPAWN_MS, spawnDelay * SPAWN_ACCELERATION);
+      scheduleNextSpawn();
+      updateHud();
+    }
+
+    function scheduleNextSpawn() {
+      clearTimeout(spawnTimer);
+      if (!running) return;
+      spawnTimer = setTimeout(spawnObject, spawnDelay);
+    }
+
+    // Main loop: move every object toward the center and check win/lose conditions.
+    function tick() {
+      if (!running) return;
+
+      const rect = game.getBoundingClientRect();
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const obj = objects[i];
+        if (!obj.alive) {
+          objects.splice(i, 1);
+          continue;
+        }
+
+        obj.x += obj.vx;
+        obj.y += obj.vy;
+        obj.el.style.left = `${obj.x}px`;
+        obj.el.style.top = `${obj.y}px`;
+
+        const distanceToCenter = Math.hypot(centerX - obj.x, centerY - obj.y);
+        if (distanceToCenter < 42) {
+          obj.alive = false;
+          obj.el.remove();
+          objects.splice(i, 1);
+          coziness = Math.min(MAX_COZINESS, coziness + COZINESS_GAIN);
+          updateHud();
+
+          if (coziness >= MAX_COZINESS) {
+            endGame();
+            return;
+          }
+        }
+      }
+
+      animationId = requestAnimationFrame(tick);
+    }
+
+    function endGame() {
+      running = false;
+      clearTimeout(spawnTimer);
+      cancelAnimationFrame(animationId);
+      finalScoreEl.textContent = score;
+      overlay.classList.add("show");
+    }
+
+    function resetGame() {
+      objects.forEach((obj) => obj.el.remove());
+      objects.length = 0;
+      score = 0;
+      coziness = 0;
+      spawnDelay = START_SPAWN_MS;
+      running = true;
+      overlay.classList.remove("show");
+      updateHud();
+      scheduleNextSpawn();
+      animationId = requestAnimationFrame(tick);
+    }
+
+    restartBtn.addEventListener("click", resetGame);
+
+    // Start game immediately on page load.
+    updateHud();
+    scheduleNextSpawn();
+    animationId = requestAnimationFrame(tick);
+  </script>
+</body>
+</html>
